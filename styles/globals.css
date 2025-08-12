@@ -1,0 +1,174 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Oakmont Realty Brand Colors */
+:root {
+  --oakmont-sage: #636B56;
+  --oakmont-brown: #864936;
+  --oakmont-tan: #B28354;
+  --oakmont-cream: #F8F2E7;
+  --oakmont-black: #000000;
+  --oakmont-grey: #1B1B1B;
+}
+
+/* Custom Tailwind Colors */
+@layer base {
+  .bg-oakmont-sage { background-color: var(--oakmont-sage); }
+  .bg-oakmont-brown { background-color: var(--oakmont-brown); }
+  .bg-oakmont-tan { background-color: var(--oakmont-tan); }
+  .bg-oakmont-cream { background-color: var(--oakmont-cream); }
+  .bg-oakmont-black { background-color: var(--oakmont-black); }
+  .bg-oakmont-grey { background-color: var(--oakmont-grey); }
+  
+  .text-oakmont-sage { color: var(--oakmont-sage); }
+  .text-oakmont-brown { color: var(--oakmont-brown); }
+  .text-oakmont-tan { color: var(--oakmont-tan); }
+  .text-oakmont-cream { color: var(--oakmont-cream); }
+  .text-oakmont-black { color: var(--oakmont-black); }
+  .text-oakmont-grey { color: var(--oakmont-grey); }
+  
+  .border-oakmont-sage { border-color: var(--oakmont-sage); }
+  .border-oakmont-brown { border-color: var(--oakmont-brown); }
+  .border-oakmont-tan { border-color: var(--oakmont-tan); }
+  .border-oakmont-cream { border-color: var(--oakmont-cream); }
+}
+
+/* Font Imports - Oakmont Brand Guidelines */
+@import url('https://fonts.googleapis.com/css2?family=Forum:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Avenir:wght@300;400;500;600;700;800&display=swap');
+
+/* Global Styles */
+body {
+  font-family: 'Avenir', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: var(--oakmont-cream);
+  color: var(--oakmont-black);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Forum', serif;
+  color: var(--oakmont-sage);
+}
+
+/* VoiCRM Component Styles */
+.voicrm-card {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(99, 107, 86, 0.15);
+  border-radius: 12px;
+  box-shadow: 0 8px 25px rgba(99, 107, 86, 0.08);
+  transition: all 0.3s ease;
+}
+
+.voicrm-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 35px rgba(99, 107, 86, 0.12);
+}
+
+.voicrm-btn-primary {
+  background: linear-gradient(135deg, var(--oakmont-sage), #7a8365);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(99, 107, 86, 0.25);
+}
+
+.voicrm-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(99, 107, 86, 0.35);
+}
+
+.voicrm-btn-secondary {
+  background: linear-gradient(135deg, var(--oakmont-tan), #c4956b);
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(178, 131, 84, 0.25);
+}
+
+.voicrm-btn-secondary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(178, 131, 84, 0.35);
+}
+
+/* Call Quality Indicators */
+.quality-excellent { color: #10B981; }
+.quality-good { color: var(--oakmont-sage); }
+.quality-fair { color: var(--oakmont-tan); }
+.quality-poor { color: var(--oakmont-brown); }
+
+/* Mobile Optimizations */
+@media (max-width: 768px) {
+  .voicrm-stacked-interface {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  .voicrm-card {
+    margin: 0 8px;
+    padding: 16px;
+  }
+}
+
+/* Call Status Animations */
+.call-connecting {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.call-active {
+  border: 2px solid var(--oakmont-sage);
+  box-shadow: 0 0 20px rgba(99, 107, 86, 0.3);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Australian Phone Number Formatting */
+.phone-input {
+  font-family: 'Avenir', monospace;
+  letter-spacing: 1px;
+}
+
+/* Transcript Styling */
+.transcript-container {
+  background: rgba(248, 242, 231, 0.6);
+  border: 1px solid rgba(99, 107, 86, 0.1);
+  border-radius: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.transcript-entry {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: white;
+  border-left: 3px solid var(--oakmont-tan);
+}
+
+.transcript-speaker {
+  font-weight: 600;
+  color: var(--oakmont-sage);
+  font-size: 0.9rem;
+}
+
+.transcript-text {
+  color: var(--oakmont-black);
+  margin-top: 4px;
+}
+
+.transcript-timestamp {
+  color: var(--oakmont-grey);
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
