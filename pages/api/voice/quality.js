@@ -1,1 +1,161 @@
-// Real-time call quality monitoring endpoint\n\nimport { createClient } from '@supabase/supabase-js';\n\nconst supabase = createClient(\n  process.env.SUPABASE_URL,\n  process.env.SUPABASE_SERVICE_KEY\n);\n\nexport default async function handler(req, res) {\n  if (req.method === 'POST') {\n    // Store quality metrics\n    try {\n      const {\n        call_sid,\n        phone_number_id,\n        agent_id,\n        mos_score,\n        latency_ms,\n        jitter_ms,\n        packet_loss_percent,\n        connection_type,\n        device_type,\n        webrtc_stats\n      } = req.body;\n\n      await supabase\n        .from('call_quality_metrics')\n        .insert({\n          call_sid,\n          phone_number_id,\n          agent_id,\n          mos_score,\n          latency_ms,\n          jitter_ms,\n          packet_loss_percent,\n          connection_type,\n          device_type,\n          webrtc_stats\n        });\n\n      // Check for SLO breaches\n      const breaches = [];\n      if (mos_score < 4.2) breaches.push('MOS below 4.2');\n      if (latency_ms > 150) breaches.push('Latency above 150ms');\n      if (jitter_ms > 20) breaches.push('Jitter above 20ms');\n      if (packet_loss_percent > 1.0) breaches.push('Packet loss above 1%');\n\n      if (breaches.length > 0) {\n        // Alert system for SLO breaches\n        console.warn('SLO Breach Alert:', {\n          call_sid,\n          agent_id,\n          breaches,\n          metrics: { mos_score, latency_ms, jitter_ms, packet_loss_percent }\n        });\n        \n        // Update phone number health score if consistent issues\n        if (phone_number_id && breaches.length >= 2) {\n          await supabase\n            .from('phone_numbers')\n            .update({\n              health_score: supabase.rpc('decrease_health_score', {\n                number_id: phone_number_id,\n                decrease_amount: 0.05\n              })\n            })\n            .eq('id', phone_number_id);\n        }\n      }\n\n      res.status(200).json({\n        success: true,\n        qualityScore: mos_score,\n        sloBreaches: breaches,\n        recommendedAction: breaches.length > 0 ? 'Check network connection' : null\n      });\n\n    } catch (error) {\n      console.error('Quality metrics storage error:', error);\n      res.status(500).json({ error: error.message });\n    }\n\n  } else if (req.method === 'GET') {\n    // Get real-time quality dashboard data\n    try {\n      const { agent_id, timeframe = '1h' } = req.query;\n\n      let timeFilter = new Date();\n      switch (timeframe) {\n        case '1h': timeFilter.setHours(timeFilter.getHours() - 1); break;\n        case '24h': timeFilter.setDate(timeFilter.getDate() - 1); break;\n        case '7d': timeFilter.setDate(timeFilter.getDate() - 7); break;\n      }\n\n      let query = supabase\n        .from('call_quality_metrics')\n        .select('*')\n        .gte('timestamp', timeFilter.toISOString())\n        .order('timestamp', { ascending: false });\n\n      if (agent_id) {\n        query = query.eq('agent_id', agent_id);\n      }\n\n      const { data: metrics, error } = await query;\n\n      if (error) throw error;\n\n      if (metrics.length === 0) {\n        return res.status(200).json({\n          success: true,\n          timeframe,\n          stats: {\n            totalCalls: 0,\n            avgMOS: 0,\n            avgLatency: 0,\n            avgJitter: 0,\n            avgPacketLoss: 0,\n            sloCompliance: {\n              mos: 100,\n              latency: 100,\n              jitter: 100,\n              packetLoss: 100\n            }\n          },\n          recentMetrics: []\n        });\n      }\n\n      // Calculate aggregated statistics\n      const stats = {\n        totalCalls: metrics.length,\n        avgMOS: (metrics.reduce((sum, m) => sum + (m.mos_score || 0), 0) / metrics.length).toFixed(1),\n        avgLatency: Math.round(metrics.reduce((sum, m) => sum + (m.latency_ms || 0), 0) / metrics.length),\n        avgJitter: Math.round(metrics.reduce((sum, m) => sum + (m.jitter_ms || 0), 0) / metrics.length),\n        avgPacketLoss: (metrics.reduce((sum, m) => sum + (m.packet_loss_percent || 0), 0) / metrics.length).toFixed(2),\n        sloCompliance: {\n          mos: Math.round((metrics.filter(m => m.mos_score >= 4.2).length / metrics.length) * 100),\n          latency: Math.round((metrics.filter(m => m.latency_ms <= 150).length / metrics.length) * 100),\n          jitter: Math.round((metrics.filter(m => m.jitter_ms <= 20).length / metrics.length) * 100),\n          packetLoss: Math.round((metrics.filter(m => m.packet_loss_percent <= 1.0).length / metrics.length) * 100)\n        }\n      };\n\n      res.status(200).json({\n        success: true,\n        timeframe,\n        stats,\n        recentMetrics: metrics.slice(0, 10)\n      });\n\n    } catch (error) {\n      console.error('Quality dashboard error:', error);\n      res.status(500).json({ error: error.message });\n    }\n  } else {\n    res.status(405).json({ error: 'Method not allowed' });\n  }\n}
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+
+// Sydney SLO targets
+const SLO_TARGETS = {
+  mos: 4.2,        // Minimum MOS score
+  latency: 150,    // Maximum latency in ms
+  jitter: 20,      // Maximum jitter in ms
+  packetLoss: 1.0  // Maximum packet loss percentage
+}
+
+export default async function handler(req, res) {
+  if (req.method === 'POST') {
+    // Store quality metrics
+    try {
+      const { 
+        call_sid, 
+        mos_score, 
+        latency, 
+        jitter, 
+        packet_loss, 
+        timestamp 
+      } = req.body
+
+      // Validate SLOs
+      const sloViolations = []
+      
+      if (mos_score && mos_score < SLO_TARGETS.mos) {
+        sloViolations.push(`MOS below target: ${mos_score} < ${SLO_TARGETS.mos}`)
+      }
+      
+      if (latency && latency > SLO_TARGETS.latency) {
+        sloViolations.push(`Latency above target: ${latency}ms > ${SLO_TARGETS.latency}ms`)
+      }
+      
+      if (jitter && jitter > SLO_TARGETS.jitter) {
+        sloViolations.push(`Jitter above target: ${jitter}ms > ${SLO_TARGETS.jitter}ms`)
+      }
+      
+      if (packet_loss && packet_loss > SLO_TARGETS.packetLoss) {
+        sloViolations.push(`Packet loss above target: ${packet_loss}% > ${SLO_TARGETS.packetLoss}%`)
+      }
+
+      // Store metrics in database
+      const { data, error } = await supabase
+        .from('call_quality_metrics')
+        .insert({
+          call_sid,
+          mos_score: mos_score || null,
+          latency: latency || null,
+          jitter: jitter || null,
+          packet_loss: packet_loss || null,
+          slo_violations: sloViolations.length > 0 ? sloViolations : null,
+          meets_slo: sloViolations.length === 0,
+          carrier_detected: null, // Can be enhanced with carrier detection
+          created_at: timestamp || new Date().toISOString()
+        })
+
+      if (error) throw error
+
+      // If SLO violations detected, potentially alert
+      if (sloViolations.length > 0) {
+        console.warn(`SLO violations for call ${call_sid}:`, sloViolations)
+        
+        // Could integrate with alerting system here
+        // await sendSlackAlert(call_sid, sloViolations)
+      }
+
+      res.status(200).json({ 
+        success: true,
+        sloViolations,
+        meetsSlo: sloViolations.length === 0,
+        targets: SLO_TARGETS
+      })
+
+    } catch (error) {
+      console.error('Quality storage error:', error)
+      res.status(500).json({ 
+        error: 'Failed to store quality metrics',
+        details: error.message 
+      })
+    }
+    
+  } else if (req.method === 'GET') {
+    // Get quality statistics
+    try {
+      const { timeframe = '24h', call_sid } = req.query
+      
+      let query = supabase.from('call_quality_metrics').select('*')
+      
+      if (call_sid) {
+        query = query.eq('call_sid', call_sid)
+      } else {
+        // Time-based filtering
+        const hoursBack = timeframe === '1h' ? 1 : timeframe === '24h' ? 24 : 168 // 1 week
+        const startTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString()
+        query = query.gte('created_at', startTime)
+      }
+      
+      const { data: metrics, error } = await query.order('created_at', { ascending: false })
+      
+      if (error) throw error
+      
+      // Calculate aggregated statistics
+      const stats = {
+        totalCalls: metrics.length,
+        averageMOS: 0,
+        averageLatency: 0,
+        averageJitter: 0,
+        averagePacketLoss: 0,
+        sloCompliance: 0,
+        violationCount: 0
+      }
+      
+      if (metrics.length > 0) {
+        const validMOS = metrics.filter(m => m.mos_score).map(m => m.mos_score)
+        const validLatency = metrics.filter(m => m.latency).map(m => m.latency)
+        const validJitter = metrics.filter(m => m.jitter).map(m => m.jitter)
+        const validPacketLoss = metrics.filter(m => m.packet_loss).map(m => m.packet_loss)
+        
+        stats.averageMOS = validMOS.length > 0 ? 
+          validMOS.reduce((sum, val) => sum + val, 0) / validMOS.length : 0
+          
+        stats.averageLatency = validLatency.length > 0 ? 
+          validLatency.reduce((sum, val) => sum + val, 0) / validLatency.length : 0
+          
+        stats.averageJitter = validJitter.length > 0 ? 
+          validJitter.reduce((sum, val) => sum + val, 0) / validJitter.length : 0
+          
+        stats.averagePacketLoss = validPacketLoss.length > 0 ? 
+          validPacketLoss.reduce((sum, val) => sum + val, 0) / validPacketLoss.length : 0
+        
+        const sloCompliant = metrics.filter(m => m.meets_slo).length
+        stats.sloCompliance = (sloCompliant / metrics.length) * 100
+        stats.violationCount = metrics.length - sloCompliant
+      }
+      
+      res.status(200).json({
+        success: true,
+        timeframe,
+        statistics: stats,
+        metrics: metrics.slice(0, 100), // Return latest 100 metrics
+        sloTargets: SLO_TARGETS
+      })
+      
+    } catch (error) {
+      console.error('Quality retrieval error:', error)
+      res.status(500).json({ 
+        error: 'Failed to retrieve quality metrics',
+        details: error.message 
+      })
+    }
+    
+  } else {
+    res.status(405).json({ error: 'Method not allowed' })
+  }
+}
