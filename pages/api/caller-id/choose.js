@@ -1,168 +1,122 @@
-// Smart DID selection algorithm for optimal answer rates
-
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed' })
   }
 
   try {
-    const { 
-      agent_id, 
-      contact_id, 
-      to_number, 
-      strategy = 'health_weighted' 
-    } = req.body;
+    const { strategy = 'random', destination, agentId = 'default' } = req.body
 
-    // Validate required fields
-    if (!agent_id || !to_number) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: agent_id, to_number' 
-      });
-    }
-
-    // Get available phone numbers based on strategy
-    let numberQuery = supabase
+    // Get available phone numbers
+    const { data: numbers, error: numbersError } = await supabase
       .from('phone_numbers')
       .select('*')
-      .eq('status', 'active');
+      .eq('is_active', true)
+      .eq('region', 'NSW')
 
-    // Apply selection strategy
+    if (numbersError) throw numbersError
+
+    if (!numbers || numbers.length === 0) {
+      return res.status(404).json({ error: 'No available phone numbers' })
+    }
+
+    let selectedNumber
+    let reason
+
     switch (strategy) {
       case 'random':
-        break;
-      
-      case 'health_weighted':
-        numberQuery = numberQuery
-          .order('health_score', { ascending: false })
-          .order('success_rate', { ascending: false })
-          .order('last_used_at', { ascending: true });
-        break;
-      
-      case 'least_recent':
-        numberQuery = numberQuery
-          .order('last_used_at', { ascending: true })
-          .order('usage_count', { ascending: true });
-        break;
-      
-      case 'geographic':
-        const areaCode = to_number.substring(0, 5);
-        numberQuery = numberQuery
-          .order('area_code', { ascending: true })
-          .order('health_score', { ascending: false });
-        break;
-    }
+        selectedNumber = numbers[Math.floor(Math.random() * numbers.length)]
+        reason = 'Random selection for optimal distribution'
+        break
 
-    const { data: availableNumbers, error: numberError } = await numberQuery.limit(5);
+      case 'health':
+        // Select number with highest health score
+        selectedNumber = numbers.reduce((best, current) => 
+          (current.health_score || 0) > (best.health_score || 0) ? current : best
+        )
+        reason = `Health-weighted selection (${(selectedNumber.health_score * 100).toFixed(0)}% health)`
+        break
 
-    if (numberError) {
-      throw new Error(`Database error: ${numberError.message}`);
-    }
+      case 'least_used':
+        // Get usage stats for today
+        const today = new Date().toISOString().split('T')[0]
+        const { data: usageStats } = await supabase
+          .from('caller_id_assignments')
+          .select('phone_number_id, count(*)')
+          .gte('created_at', today + 'T00:00:00Z')
+          .group('phone_number_id')
 
-    if (!availableNumbers || availableNumbers.length === 0) {
-      return res.status(503).json({ 
-        error: 'No available phone numbers in pool',
-        suggestion: 'Contact administrator to provision more DIDs'
-      });
-    }
+        // Find least used number
+        const usageMap = {}
+        usageStats?.forEach(stat => {
+          usageMap[stat.phone_number_id] = stat.count
+        })
 
-    // Select the best number based on strategy
-    let selectedNumber;
-    if (strategy === 'random') {
-      selectedNumber = availableNumbers[Math.floor(Math.random() * availableNumbers.length)];
-    } else {
-      selectedNumber = availableNumbers[0];
-    }
-
-    // Check for team collision if contact_id provided
-    let collisionWarning = null;
-    if (contact_id) {
-      const { data: recentContact, error: collisionError } = await supabase
-        .from('contacts')
-        .select('last_contacted_by, last_contact_date, profiles!contacts_last_contacted_by_fkey(full_name)')
-        .eq('id', contact_id)
-        .single();
-
-      if (!collisionError && recentContact?.last_contact_date) {
-        const hoursSinceContact = (new Date() - new Date(recentContact.last_contact_date)) / (1000 * 60 * 60);
+        selectedNumber = numbers.reduce((least, current) => {
+          const currentUsage = usageMap[current.id] || 0
+          const leastUsage = usageMap[least.id] || 0
+          return currentUsage < leastUsage ? current : least
+        })
         
-        if (hoursSinceContact < 24 && recentContact.last_contacted_by !== agent_id) {
-          collisionWarning = {
-            message: `Contact was called ${Math.round(hoursSinceContact)} hours ago by ${recentContact.profiles?.full_name}`,
-            lastContactBy: recentContact.last_contacted_by,
-            lastContactDate: recentContact.last_contact_date,
-            hoursAgo: Math.round(hoursSinceContact)
-          };
-        }
-      }
+        reason = `Least used today (${usageMap[selectedNumber.id] || 0} calls)`
+        break
+
+      case 'geographic':
+        // Try to match area code (basic implementation)
+        const destinationArea = destination?.slice(-10, -8) // Get area from number
+        const matchingArea = numbers.find(num => 
+          num.phone_number.includes(destinationArea)
+        )
+        
+        selectedNumber = matchingArea || numbers[0]
+        reason = matchingArea ? 'Geographic area match' : 'No area match, using default'
+        break
+
+      default:
+        selectedNumber = numbers[0]
+        reason = 'Default selection'
     }
 
-    // Record the assignment
-    const { error: assignmentError } = await supabase
+    // Log the assignment
+    await supabase
       .from('caller_id_assignments')
       .insert({
-        agent_id,
         phone_number_id: selectedNumber.id,
-        contact_id,
-        strategy,
-        from_number: selectedNumber.phone_number,
-        to_number
-      });
+        agent_id: agentId,
+        destination_number: destination,
+        strategy_used: strategy,
+        assignment_reason: reason
+      })
 
-    if (assignmentError) {
-      console.error('Assignment logging error:', assignmentError);
-    }
-
-    // Update usage statistics
+    // Update usage stats
     await supabase
       .from('phone_numbers')
-      .update({
-        usage_count: selectedNumber.usage_count + 1,
-        last_used_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+      .update({ 
+        last_used: new Date().toISOString(),
+        usage_count: (selectedNumber.usage_count || 0) + 1
       })
-      .eq('id', selectedNumber.id);
-
-    // Update contact last contacted info
-    if (contact_id) {
-      await supabase
-        .from('contacts')
-        .update({
-          last_contacted_by: agent_id,
-          last_contact_date: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', contact_id);
-    }
+      .eq('id', selectedNumber.id)
 
     res.status(200).json({
-      success: true,
-      selectedNumber: {
-        id: selectedNumber.id,
-        phoneNumber: selectedNumber.phone_number,
-        region: selectedNumber.region,
-        healthScore: selectedNumber.health_score,
-        strategy: strategy
-      },
-      collisionWarning,
-      metadata: {
-        totalAvailable: availableNumbers.length,
-        usageCount: selectedNumber.usage_count + 1,
-        lastUsed: selectedNumber.last_used_at
-      }
-    });
+      callerId: selectedNumber.phone_number,
+      numberId: selectedNumber.id,
+      strategy,
+      reason,
+      healthScore: selectedNumber.health_score,
+      carrier: selectedNumber.carrier
+    })
 
   } catch (error) {
-    console.error('Caller ID selection error:', error);
+    console.error('Caller ID selection error:', error)
     res.status(500).json({ 
       error: 'Failed to select caller ID',
       details: error.message 
-    });
+    })
   }
 }
